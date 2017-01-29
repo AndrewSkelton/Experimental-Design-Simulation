@@ -1,0 +1,225 @@
+---
+title: "Experimental Design"
+output: html_notebook
+---
+
+An R Notebook to establish the feasibility of a time course experiment. In addition, if the experiment is statistically possible, optimise the batch allocation of each sample to absorb sequencing batch effect.
+
+```{r set_workspace, warning=FALSE}
+library(dplyr)
+library(limma)
+library(readr)
+library(splines)
+library(statmod)
+set.seed(73)
+
+# Read in phenotype file, convert columns to factors, and wrangle columns.
+design_in                  <- read_tsv("../Cohort_Samples4.txt") %>% as.data.frame %>%
+                              mutate_each(funs(as.factor), Patient, Visit) %>%
+                              mutate(Visit_tp = Visit,
+                                     Var      = paste0(Visit,"_",Flare),
+                                     ExBatch  = "0",
+                                     SqBatch  = "0")
+
+# Limit Coefficients
+design_in                  <- design_in %>% filter(Flare != "Ctrl", Visit != "T", Visit != "U")
+# , Visit != "X", Visit != "U")
+
+#
+relev_var                  <- levels(design_in$Visit_tp)[c(0,1,6,3,2,4)]
+design_in$Visit_tp         <- factor(design_in$Visit_tp, levels = relev_var)
+design_in                  <- design_in %>%
+                              mutate(Visit_tp = Visit_tp %>% as.character,
+                                     Visit_tp = Visit_tp %>% as.numeric) %>%
+                              arrange(Patient)
+
+# Set the number samples to be processed at once
+extraction_batches         <- 24
+# Calculate the number of batches
+no_of_batches              <- (nrow(design_in)/extraction_batches) %>% ceiling
+batch_df                   <- c()
+
+# Set bin variables. These are manually created
+# but could be automated based on no_of_batches
+st1 <- c(); st2 <- c(); st3 <- c()
+st4 <- c(); st5 <- c(); st6 <- c()
+idx <- 1
+
+# Loop through the variables of interest and
+# assign them to bins, with the intention of
+# creating a balanced design.
+for(i in design_in$Var) {
+  # if(!(i %in% unique(st1))) {
+  #   if(length(st1) < 15) {
+  #     st1 <- c(st1,i)
+  #     design_in[idx,]$ExBatch <- "ST1"
+  #   }
+  if(!(i %in% unique(st1))) {
+    st1 <- c(st1,i)
+    design_in[idx,]$ExBatch <- "ST1"
+  }else if(!(i %in% unique(st2)) ) {
+    st2 <- c(st2,i)
+    design_in[idx,]$ExBatch <- "ST2"
+  }else if(!(i %in% unique(st3)) ) {
+    st3 <- c(st3,i)
+    design_in[idx,]$ExBatch <- "ST3"
+  }else if(!(i %in% unique(st4)) ) {
+    st4 <- c(st4,i)
+    design_in[idx,]$ExBatch <- "ST4"
+  }else if(!(i %in% unique(st5)) ) {
+    st5 <- c(st5,i)
+    design_in[idx,]$ExBatch <- "ST5"
+  }else if(!(i %in% unique(st6)) ) {
+    st6 <- c(st6,i)
+    design_in[idx,]$ExBatch <- "ST6"
+  }else if(length(st1) < extraction_batches) { st1 <- c(st1,i); design_in[idx,]$ExBatch <- "ST1"
+  }else if(length(st2) < extraction_batches) { st2 <- c(st2,i); design_in[idx,]$ExBatch <- "ST2"
+  }else if(length(st3) < extraction_batches) { st3 <- c(st3,i); design_in[idx,]$ExBatch <- "ST3"
+  }else if(length(st4) < extraction_batches) { st4 <- c(st4,i); design_in[idx,]$ExBatch <- "ST4"
+  }else if(length(st5) < extraction_batches) { st5 <- c(st5,i); design_in[idx,]$ExBatch <- "ST5"
+  }else if(length(st6) < extraction_batches) { st6 <- c(st6,i); design_in[idx,]$ExBatch <- "ST6"}
+  idx <- idx + 1
+}
+
+# Check how many variables were assigned to each
+# bin, and their total size.
+length(unique(design_in$Var)) %>% paste0("Number of levels: ", .)
+st1 %>% unique %>% length %>% paste0("ST1 Levels: ",.)
+st2 %>% unique %>% length %>% paste0("ST2 Levels: ",.)
+st3 %>% unique %>% length %>% paste0("ST3 Levels: ",.)
+st4 %>% unique %>% length %>% paste0("ST4 Levels: ",.)
+st5 %>% unique %>% length %>% paste0("ST5 Levels: ",.)
+st6 %>% unique %>% length %>% paste0("ST6 Levels: ",.)
+
+paste0("\nSize of bins: ")
+st1 %>% length %>% paste0("ST1 Size: ",.)
+st2 %>% length %>% paste0("ST2 Size: ",.)
+st3 %>% length %>% paste0("ST3 Size: ",.)
+st4 %>% length %>% paste0("ST4 Size: ",.)
+st5 %>% length %>% paste0("ST5 Size: ",.)
+st6 %>% length %>% paste0("ST6 Size: ",.)
+
+
+# Repeat the procedure for sequencing batches, taking into
+# account, the allocated extraction batches.
+design_in                  <- design_in %>% mutate(Var2 = paste0(Flare,"_",Visit,"_",ExBatch))
+no_of_batches              <- 4
+extraction_batches         <- 40
+batch_df                   <- c()
+
+sb1 <- c(); sb2 <- c();
+sb3 <- c(); sb4 <- c();
+idx <- 1
+for(i in design_in$Var2) {
+  # if(!(i %in% unique(st1))) {
+  #   if(length(st1) < 15) {
+  #     st1 <- c(st1,i)
+  #     design_in[idx,]$ExBatch <- "ST1"
+  #   }
+  if(!(i %in% sb1) ) {
+    sb1 <- c(sb1,i)
+    design_in[idx,]$SqBatch <- "SB1"
+  }else if(!(i %in% unique(sb2)) ) {
+    sb2 <- c(sb2,i)
+    design_in[idx,]$SqBatch <- "SB2"
+  }else if(!(i %in% unique(sb3)) ) {
+    sb3 <- c(sb3,i)
+    design_in[idx,]$SqBatch <- "SB3"
+  }else if(!(i %in% unique(sb4)) ) {
+    sb4 <- c(sb4,i)
+    design_in[idx,]$SqBatch <- "SB4"
+  }
+  else if(length(sb1) < extraction_batches) { sb1 <- c(sb1,i); design_in[idx,]$SqBatch <- "SB1" }
+  else if(length(sb2) < extraction_batches) { sb2 <- c(sb2,i); design_in[idx,]$SqBatch <- "SB2" }
+  else if(length(sb3) < extraction_batches) { sb3 <- c(sb3,i); design_in[idx,]$SqBatch <- "SB3" }
+  else if(length(sb4) < extraction_batches) { sb4 <- c(sb4,i); design_in[idx,]$SqBatch <- "SB4" }
+  idx <- idx + 1
+}
+
+# Check the allocated bins
+length(unique(design_in$Var)) %>% paste0("Number of levels: ", .)
+sb1 %>% unique %>% length %>% paste0("SB1 Levels: ",.)
+sb2 %>% unique %>% length %>% paste0("SB2 Levels: ",.)
+sb3 %>% unique %>% length %>% paste0("SB3 Levels: ",.)
+sb4 %>% unique %>% length %>% paste0("SB4 Levels: ",.)
+
+paste0("\nSize of bins: ")
+sb1 %>% length %>% paste0("SB1 Size: ",.)
+sb2 %>% length %>% paste0("SB2 Size: ",.)
+sb3 %>% length %>% paste0("SB3 Size: ",.)
+sb4 %>% length %>% paste0("SB4 Size: ",.)
+
+
+write_csv(design_in, path = "../SampleTable_BatchEstimation.csv")
+
+```
+
+
+```{r summary_stats}
+# Summary statistics based on variables of interest
+design_in %>% group_by(Patient)          %>% summarise(n = n())
+design_in %>% group_by(Visit_tp)         %>% summarise(n = n())
+design_in %>% group_by(Flare)            %>% summarise(n = n())
+design_in %>% group_by(Flare,Visit_tp)   %>% summarise(n = n())
+design_in %>% group_by(Var,ExBatch)      %>% summarise(n = n())
+design_in %>% group_by(Var,SqBatch)      %>% summarise(n = n())
+design_in %>% nrow
+```
+
+Design pseudo-matrix of expression values
+
+```{r pseudo_data}
+# Pseudo data creation
+mat_row              <- 1000
+pseudo_vec           <- rnorm(nrow(design_in)*mat_row, mean = 7, sd = 1) %>% log2
+pseudo_mat           <- matrix(data = pseudo_vec, nrow = mat_row, ncol = nrow(design_in))
+colnames(pseudo_mat) <- design_in$Sample_ID
+rownames(pseudo_mat) <- 1:mat_row
+```
+
+
+
+```{r model_design_spline}
+# Design and fit a spline model to show proof
+# of principle.
+spline_in            <- ns(design_in$Visit_tp,2)
+dep_var              <- design_in$Flare
+ex_batch             <- design_in$ExBatch
+sq_batch             <- design_in$SqBatch
+#  + sq_batch
+design               <- model.matrix(~0 + dep_var + dep_var:spline_in + ex_batch)
+colnames(design)     <- colnames(design) %>% gsub(":","_",.)
+block_in             <- design_in$Patient
+corfit               <- duplicateCorrelation(pseudo_mat, design, block = block_in)
+cont                 <- c("Test"   = "dep_var1_spline_in1-dep_var0_spline_in1")
+cont_mat             <- makeContrasts(contrasts = cont, levels = colnames(design))
+colnames(cont_mat)   <- names(cont)
+fit                  <- lmFit(pseudo_mat, design, block = block_in, correlation = corfit$consensus)
+fit2                 <- fit %>% contrasts.fit(cont_mat) %>% eBayes
+contrasts            <- colnames(cont_mat)
+pVal                 <- 0.01
+fc                   <- 2
+topTable(fit2, coef = "Test")
+```
+
+
+```{r model_design_group}
+# Model a group based design, and check for
+# full rank model. 
+dep_var              <- design_in %>% mutate(Var = paste0("TP",Visit_tp,"_",Flare)) %>% .[["Var"]]
+ex_batch             <- design_in$ExBatch
+sq_batch             <- design_in$SqBatch
+design               <- model.matrix(~0 + dep_var + ex_batch + sq_batch)
+colnames(design)     <- colnames(design) %>% gsub("Var","",.)
+block_in             <- design_in$Patient
+corfit               <- duplicateCorrelation(pseudo_mat, design, block = block_in)
+cont                 <- c("Test"   = "dep_varTP0_0-dep_varTP0_1")
+cont_mat             <- makeContrasts(contrasts = cont, levels = colnames(design))
+colnames(cont_mat)   <- names(cont)
+fit                  <- lmFit(pseudo_mat, design, block = block_in, correlation = corfit$consensus)
+fit2                 <- fit %>% contrasts.fit(cont_mat) %>% eBayes
+contrasts            <- colnames(cont_mat)
+pVal                 <- 0.01
+fc                   <- 2
+topTable(fit2, coef = "Test")
+```
