@@ -1,0 +1,49 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r load_libs}
+library(tidyverse)
+library(limma)
+```
+
+
+```{r make_data}
+data.conditions <- LETTERS[1:4]
+data.replicates <- 6
+data.rows       <- 1e3
+data.cols       <- length(data.conditions) * data.replicates
+pheno.table     <- data.frame(SampleType = rep(data.conditions, each = data.replicates)) %>% 
+                   mutate(Batch  = c(rep(1,3),rep(2,6),rep(3,6),rep(4,6),rep(5,3)),
+                          Batch  = as.factor(Batch),
+                          Sample = paste0(1:nrow(.), SampleType))
+data.mat        <- rnorm(data.rows*data.cols, 7, 2) %>% 
+                   matrix(ncol = data.cols) %>% 
+                   `colnames<-`(pheno.table$Sample) %>% 
+                   `rownames<-`(paste0("PROBE_",1:data.rows))
+```
+
+
+```{r fit_model}
+design           <- model.matrix(~0 + SampleType + Batch, data = pheno.table)
+colnames(design) <- colnames(design) %>% gsub("SampleType","",.)
+contrasts        <- combn(length(data.conditions),2) %>% t
+for(i in 1:nrow(contrasts)) {
+  contrasts[i,1] <- data.conditions[as.numeric(contrasts[i,1])]
+  contrasts[i,2] <- data.conditions[as.numeric(contrasts[i,2])]
+}
+contrasts        <- paste0(contrasts[,1], "-", contrasts[,2]) %>% 
+                    `names<-`(gsub(" - ","_Vs_",.)) %>% 
+                    makeContrasts(contrasts = ., levels = colnames(design))
+
+fit              <- lmFit(data.mat, design) %>% 
+                    contrasts.fit(contrasts = contrasts) %>% 
+                    eBayes
+```
+
+
+```{r run_test}
+tt <- topTable(fit, coef = "A-D")
+```
+
